@@ -1,0 +1,253 @@
+---
+title: "Modelacion de dolar blue Argentina"
+author: "Roman Landa"
+date: "2023-08-05"
+output:
+  html_document:
+    toc: TRUE
+    toc_float: TRUE
+    code_download: TRUE
+    theme: united
+    df_print: paged
+link-citations: yes
+---
+
+```{r include=FALSE}
+library(dplyr)
+library(plotly)
+library(car)
+library(ggplot2)
+library(openxlsx)
+library(cowplot)
+library(mgcv) 
+library(knitr)
+library(readxl)
+library(lmtest)
+library(lattice)
+setwd("C:/Users/Temp/Documents/Trabajo/BIConsultants/ModeloDolarBlue")
+```
+
+# Introduccion
+
+En Argentina, el "dólar blue" hace referencia a la cotización no oficial del dólar estadounidense en el mercado paralelo. A diferencia del tipo de cambio oficial establecido por el Banco Central de la República Argentina (BCRA), el dólar blue es un valor determinado por la oferta y la demanda en un mercado no regulado. Esta cotización suele ser utilizada como un indicador de la percepción del mercado sobre la estabilidad económica y financiera del país. Las variaciones en el valor del dólar blue pueden tener un impacto significativo en la economía argentina, ya que influyen en la inflación, los precios, la inversión y la forma de ahorro de las personas.
+
+# Objetivo
+
+El propósito central de este programa es crear un modelo para predecir el comportamiento del dólar blue en Argentina. Para alcanzar este objetivo, se utilizarán las variables del REM (Relevamiento de Expectativas de Mercado) y asi podremos usar dichas predicciones para pronosticar el valor del dolar a seis meses futuros. Este relevamiento junta proyecciones realizadas de diversos analistas económicos y financieros del país.
+
+## Predicciones del REM:
+
+El Relevamiento de Expectativas de Mercado (REM) constituye una herramienta fundamental del Banco Central de la República Argentina. Su finalidad es recopilar las proyecciones de especialistas del mercado en relación con variadas variables económicas clave. Estas variables son:
+
+1. Crecimiento del Producto Interno Bruto (PIB): Representa la expansión económica del país en un período específico.
+2. Inflación o Indice de Precios al Consumidor (IPC): Refleja el aumento generalizado y sostenido de los precios en la economía.
+3. Tasa de Interés (BADLAR): Indica el costo del dinero y puede influir en la inversión y el ahorro.
+4. Tipo de Cambio: Es el valor de la moneda nacional en relación con otras monedas, como el dólar estadounidense.
+5. Balanza Comercial: Muestra la diferencia entre las exportaciones e importaciones de bienes.
+6. Desocupacion porcentual: Muestra el porcentaje de la poblacion economicamente activa que se encuantra desempleada.
+
+# *Disclaimer*
+
+*Es fundamental remarcar que el mercado del dólar blue en Argentina es altamente volátil y está sujeto a influencias complejas y variables sociales imposibles de predecir. Por lo tanto, cualquier pronóstico generado a través de este programa debe ser considerado como una APROXIMACIÓN y una herramienta orientativa, NO como una predicción infalible. Los resultados obtenidos deben ser interpretados con precaución y no deben constituir la única base para la toma de decisiones financieras importantes. Ademas por la naturaleza de los datos seria oportuno realizar un analisi de series de tiempo o datos longitudinales, pero ese no es el objetivo de este informe.*
+
+
+# Data
+
+Los datos fueron tomados de fuentes confiables como Ambito Financiero o series historicas publicadas por el INDEC o la secretaria de datos del gobierno.
+
+```{r include=FALSE}
+Base_2016a23 <- read_excel("Base_2016a23.xlsx", 
+    sheet = "datos_interpolados", col_types = c("date", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric"))
+Base_2016a23$fecha=as.Date(Base_2016a23$fecha)
+Base_2016a23
+```
+Como se muestra, tomamos solo datos desde el mes de diciembre de 2016, algunas series son mensuales, otras trimestrales y otras diarias, para facilitar el ajuste del modelo decidí mensualizar los datos con una intrapolacion spline en el caso de los datos trimestrales (como lo son PBI y desocupacion porcentual) y tomar la primer observacion de cada mes en el caso de las series diarias (como lo son tasa de interes y tipo de cambio)
+
+# Modelo Lineal
+
+```{r include=FALSE}
+model=lm(venta ~ doficial + exportacion + tasa_interes+pib_mensual + desocupacion_porc + ipc_nacional + importacion, data = Base_2016a23)
+summary(model)
+```
+Ajustamos un modelo lineal y vemos en la tabla ANOVA que solamente el dolar oficial, la tasa de interes y las importaciones son significativas, junto al PBI si usamos un nivel de significacion del 10%.
+Para aplicar este modelo estoy suponiendo que los datos son independientes igualmente distribuidos y que los residuos se distribuyen de forma normal con variancia constante (supuestos que sabemos que no son reales). Continuo el analisis con la comprobacion de dichos supuestos.
+
+## Residuos
+
+```{r message=FALSE, warning=FALSE,out.width="100%"}
+# Calcular los residuos estandarizados
+residuos <- residuals(model)
+fitted_values <- model$fitted.values
+
+# Crear un data frame con los residuos estandarizados y los valores ajustados
+residuals_df <- data.frame(Fitted_Values = fitted_values, Residuales = residuos)
+
+# Graficar los residuos estandarizados versus los valores ajustados
+g1=ggplot(residuals_df, aes(x = Fitted_Values, y = Residuales)) +
+  geom_point(shape = 20) +
+  geom_hline(yintercept = 0, color = "red") +
+  xlab("Valores Ajustados") +
+  ylab("Residuos Estandarizados") +
+  ggtitle("Gráfico de Residuos Estandarizados vs. Valores Ajustados")
+# Gráfico QQ de los residuos estandarizados
+g2=ggplot(data.frame(Residuales = residuos), aes(sample = Residuales)) +
+  geom_qq() +
+  geom_qq_line() +
+  xlab("Cuantiles Teóricos") +
+  ylab("Cuantiles de los Residuos Estandarizados") +
+  ggtitle("Gráfico QQ de los Residuos Estandarizados")
+plot_grid(g1,g2)
+```
+Realizamos los graficos de residuos estandarizado vs valores ajustados y vemos que a medida que aumenta el valor ajustado tambien aumenta la variancia de los residuos y que los cuantiles observados podrian asimejarse a una distribucion normal, de igual forma nos valdremos de tests estadisticos para terminar de concluir.
+
+
+```{r}
+shapiro.test(residuos)
+```
+El Shapiro Test plantea:
+$ H_0) $ Los datos provienen de una población que sigue una distribución normal. 
+$ H_1) $ Los datos no provienen de una población que sigue una distribución normal.
+Y como el valor de probabilidad asociado es mayor a 0.05 podemos asumir que se cumple la hipotesis nula.
+
+
+```{r}
+bptest(model) 
+```
+
+El test de Breusch-Pagan plantea:
+$ H_0) $ La varianza de los residuos es constante (homocedasticidad). 
+$ H_1) $ La varianza de los residuos no es constante (heterocedasticidad).
+Y como el valor de probabilidad asociado es menor  a 0.05 podemos asumir que se cumple la hipotesis nula.
+
+*Nuevamente vale aclarar que estos test usan supuestos de normalidad, los cuales sabemos que no son reales, por lo que deberiamos usar algun tipo de test no parametrico, pero a fines prácticos al usuario no le interesa el cumplimiento de estos supuestos sino que tan bien ajusta el modelo.*
+
+# Transformacion
+
+Visto y considerando el incumplimiento de los supuesto y que, en los ultimos años, el crecimiento tanto del dolar como de la tasa de interes no fue lineal sino mas bien cuadratico o exponencial, decidi aplicar transformaciones al modelo lineal.
+Luego de muchas pruebas practicas observe que las predicciones mas exactas y estables se daban aplicando transformacion logaritmica a todas las variables.
+
+```{r include=FALSE}
+Base_2016a23$log_venta=log(Base_2016a23$venta)
+Base_2016a23$log_doficial=log(Base_2016a23$doficial)
+Base_2016a23$log_export=log(Base_2016a23$exportacion)
+Base_2016a23$log_tasa=log(Base_2016a23$tasa_interes)
+Base_2016a23$log_pib=log(Base_2016a23$pib_mensual)
+Base_2016a23$log_desoc=log(Base_2016a23$desocupacion_porc)
+Base_2016a23$log_ipc=log(Base_2016a23$ipc_nacional)
+Base_2016a23$log_import=log(Base_2016a23$importacion)
+
+
+modelog=lm(log_venta ~ log_doficial + log_export + log_tasa+ log_pib + log_desoc + log_ipc + log_import, data = Base_2016a23)
+summary(modelog)
+```
+Podriamos repetir la interpretación arriba mencionada con la diferencia de que ahora exportación y desocupación mensual son las únicas no significativas (de igual forma no las eliminaremos del modelo)
+
+
+## Residuos Log
+
+```{r message=FALSE, warning=FALSE, out.width="100%"}
+# Calcular los residuos estandarizados
+residuos_log <- residuals(modelog)
+fitted_values_log <- modelog$fitted.values
+
+# Crear un data frame con los residuos estandarizados y los valores ajustados
+residuals_df <- data.frame(Fitted_Values = fitted_values_log, Residuales = residuos_log)
+
+# Graficar los residuos estandarizados versus los valores ajustados
+g1=ggplot(residuals_df, aes(x = Fitted_Values, y = Residuales)) +
+  geom_point(shape = 20) +
+  geom_hline(yintercept = 0, color = "red") +
+  xlab("Valores Ajustados") +
+  ylab("Residuos Estandarizados") +
+  ggtitle("Gráfico de Residuos Estandarizados vs. Valores Ajustados")
+# Gráfico QQ de los residuos estandarizados
+g2=ggplot(data.frame(Residuales = residuos_log), aes(sample = Residuales)) +
+  geom_qq() +
+  geom_qq_line() +
+  xlab("Cuantiles Teóricos") +
+  ylab("Cuantiles de los Residuos Estandarizados") +
+  ggtitle("Gráfico QQ de los Residuos Estandarizados")
+plot_grid(g1,g2)
+```
+
+```{r}
+bptest(modelog) 
+shapiro.test(residuos_log)
+```
+A diferencia del análisis anterior, aqui si vemos un cumplimiento de los supuestos tanto graficamente como en los test aplicados.
+
+
+## Interpretacion 
+
+El modelo al que le introduciremos las predicciones del REM para obtener valores de dolar blue futuro será entonces:
+
+$$ log(DolarBlue)=17.5+1.13*log(Dolar Oficial)-0.32*log(Tasa Interes)+0.3*log(IPC_{100})-1.55*log(PBI)+0.31*log(Importacion)  $$
+
+1. log_doficial
+2. log_tasa_interes
+3. log_ipc_nacional (base 100 en diciembre de 2016)
+4. log_pib_mensual (en millones de dolares)
+5. log_importacion (en millones de dolares)
+6. log_desocupacion_porc 
+7. lo_exportacion (en millones de dolares)
+
+
+# Aplicación gráfica
+
+Para visualizar como predice el modelo que ajustamos tomaremos las predicciones de los datos que ya tenemos y las compararemos con los valores reales que tuvo el dolar blue. Ademas le agegamos dos bandas al grafico, una que indica el 170% y otra que indica el 210% del valor del dolar oficial que por evidencia observacional son las franjas entre las que estuvo fluctuando el dolar blue en los ultimos años.
+
+```{r}
+Base_2016a23$ypredlog=exp(predict(modelog,newdata = Base_2016a23))
+Base_2016a23$doficial17=Base_2016a23$doficial*1.7
+Base_2016a23$doficial21=Base_2016a23$doficial*2.1
+```
+
+
+```{r,out.width="100%"}
+grafico_plotly <- plot_ly(data = Base_2016a23, x = ~fecha) %>%
+  add_lines(y = ~venta, name = "Venta", line = list(color = "blue")) %>%
+  add_lines(y = ~ypredlog, name = "Predicciones", line = list(color = "red")) %>%
+  add_lines(y = ~doficial17, name = "170% Dolar Oficial", line = list(color = "gray", dash = "dash")) %>%
+  add_lines(y = ~doficial21, name = "210% Dolar Oficial", line = list(color = "gray", dash = "dash")) %>%
+  layout(title = "Comparación Predicciones vs Blue real",
+         xaxis = list(title = "Fecha"),
+         yaxis = list(title = "Valores"))
+
+grafico_plotly
+```
+
+# Conclusion 
+
+Aplicando las predicciones que se publican en el REM y utilizando este modelo podemo tener una nocion del comportamiento futuro del dolar blue. En la practica podemos ir actualizando los datos que ajustan la modelo y observando los resultados. En mi experiencia, si bien el modelo sobre estima, resulta util para identificar un salto cercano como se dio por ejemplo luego de las elecciones PASO 2023
+
+# Adicional: Otros Modelos Ajustado
+
+Como remarque durante todo el informe, sabemos que el dolar blue no se comporta de forma lineal y que estos modelos estan ajustados a base de supuestos erroneos. Por esto podria continuarse el analisis ajustando un modelo aditivo no lineal.
+
+```{r}
+
+modelo_blue_aditivo=gam(venta ~ s(doficial) + s(exportacion) + s(importacion) + s(tasa_interes) + s(pib_mensual) + s(desocupacion_porc) + s(ipc_nacional),
+                        data = Base_2016a23)
+summary(modelo_blue_aditivo)
+```
+No profundarisare en el analisis de este modelo por falta de erramientas teoricas, pero podriamos observarlo y compararlo en el grafico anterior
+
+```{r,out.width="100%"}
+Base_2016a23$ypredgam=predict(modelo_blue_aditivo,newdata = Base_2016a23)
+grafico_plotly <- plot_ly(data = Base_2016a23, x = ~fecha) %>%
+  add_lines(y = ~venta, name = "Venta", line = list(color = "blue")) %>%
+  add_lines(y = ~ypredlog, name = "Modelo Log", line = list(color = "red")) %>%
+  add_lines(y = ~ypredgam, name = "Modelo GAM", line = list(color = "green")) %>%
+  add_lines(y = ~doficial17, name = "170% Dolar Oficial", line = list(color = "gray", dash = "dash")) %>%
+  add_lines(y = ~doficial21, name = "210% Dolar Oficial", line = list(color = "gray", dash = "dash")) %>%
+  layout(title = "Comparación Predicciones vs Blue real",
+         xaxis = list(title = "Fecha"),
+         yaxis = list(title = "Valores"))
+
+grafico_plotly
+```
+
+Las predicciones de este modelo practimaente se superponen con el valor real que fue tomando el dolar blue, lo que indica un gran ajuste, pero en la practica un pequeño cambio en las exportaciones aumentaba mucho el error, lo que nos lleva a usarlo solo como un complemento del modelo anterior.
